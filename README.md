@@ -7,7 +7,7 @@ Multi-strategy trading bots platform with real-time monitoring and parallel exec
 ✅ **3 Bots Running in Parallel**
 - v13 FIXED - Multi-confirmation with hedge
 - v13.5 ENHANCED - Optimized with scoring system ⭐
-- v14 TRUE METHOD - Yuichi psychological warfare
+- v14 TRUE METHOD - Psychological
 
 ✅ **Real-time Updates**
 - WebSocket-powered live data
