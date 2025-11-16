@@ -422,5 +422,5 @@ if __name__ == '__main__':
     print("Access at: http://localhost:5000")
     print("=" * 70)
     
-    # Start Flask-SocketIO server
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
+    # Pour test local
+    socketio.run(app, debug=False, host='0.0.0.0', port=5000)
