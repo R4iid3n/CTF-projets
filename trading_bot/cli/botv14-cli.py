@@ -1,24 +1,31 @@
 # -*- coding: utf-8 -*-
-# Trading Bot v14 - "True Yuichi Method" (CLI Version)
-# Basé sur la vraie philosophie de Yuichi Katagiri (Tomodachi Game)
-# "Retourner les pièges contre ceux qui les tendent"
-#
-# Sauvegarde ce fichier sous : botv14-cli.py
+# Trading Bot v14 - "True Yuichi Method" (CLI Version - NORMAL)
+# Application de la philosophie Yuichi Katagiri en mode réaliste & discipliné.
+
+"""
+PHILOSOPHIE (raccourcie) :
+
+1. Observer longtemps, n'agir que quand le piège est clair
+2. Comprendre la psychologie : retail vs whales
+3. Frapper fort uniquement sur les setups "Game Over"
+4. Utiliser la taille & le martingale comme arme psychologique, pas comme roulette
+"""
 
 import ccxt
 import pandas as pd
 import numpy as np
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import deque
 import sys
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from enum import Enum
 import os
 import json
 
+# Encode stdout en UTF-8 pour les logs
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
@@ -31,68 +38,68 @@ logging.basicConfig(
     format="%(asctime)s - [YUICHI-TRUE] - %(levelname)s - %(message)s",
     level=logging.INFO,
     handlers=[
-        logging.FileHandler("yuichi_bot_v14.log"),
+        logging.FileHandler("yuichi_bot_v14_cli.log"),
         logging.StreamHandler()
     ],
 )
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------
-# ENUMS
+# ENUMS & DATACLASSES
 # ---------------------------------------------------------------------
 
+
 class TrapType(Enum):
-    BULL_TRAP = "bull_trap"           # Faux breakout haut
-    BEAR_TRAP = "bear_trap"           # Faux breakout bas
-    LIQUIDITY_GRAB = "liquidity_grab" # Stop hunt
+    BULL_TRAP = "bull_trap"
+    BEAR_TRAP = "bear_trap"
+    LIQUIDITY_GRAB = "liquidity_grab"
     WHALE_ACCUMULATION = "whale_accumulation"
     WHALE_DISTRIBUTION = "whale_distribution"
-    RETAIL_FOMO = "retail_fomo"       # Retail achète le top
-    RETAIL_PANIC = "retail_panic"     # Retail vend le bottom
+    RETAIL_FOMO = "retail_fomo"
+    RETAIL_PANIC = "retail_panic"
 
 
 class MarketSentiment(Enum):
-    EXTREME_FEAR = "extreme_fear"     # Capitulation
+    EXTREME_FEAR = "extreme_fear"
     FEAR = "fear"
     NEUTRAL = "neutral"
     GREED = "greed"
-    EXTREME_GREED = "extreme_greed"   # Euphorie
-    MANIPULATION = "manipulation"     # Whales jouent
+    EXTREME_GREED = "extreme_greed"
+    MANIPULATION = "manipulation"
 
 
 class GameState(Enum):
-    """État du 'jeu' psychologique"""
-    OBSERVING = "observing"           # Phase d'observation
-    TRAP_DETECTED = "trap_detected"   # Piège détecté
-    SETUP_FORMING = "setup_forming"   # Setup en formation
-    GAME_OVER = "game_over"           # Setup parfait - FRAPPE FORT
-    UNCERTAIN = "uncertain"           # Conditions floues
+    OBSERVING = "observing"
+    TRAP_DETECTED = "trap_detected"
+    SETUP_FORMING = "setup_forming"
+    GAME_OVER = "game_over"
+    UNCERTAIN = "uncertain"
 
 
 @dataclass
 class MarketPsychology:
     sentiment: MarketSentiment
     fear_greed_index: float
-    retail_positioning: float         # % de retail en long (proxy via RSI)
+    retail_positioning: float
     smart_money_flow: float
     volatility_regime: str
     manipulation_detected: bool
     trap_type: Optional[TrapType]
-    trap_confidence: float            # 0-100%
+    trap_confidence: float
     game_state: GameState
 
 
 # ---------------------------------------------------------------------
-# CONFIG - VERSION NORMALE (moins agressive que aggressive)
+# CONFIG v14 NORMAL (moins agressif que aggressive)
 # ---------------------------------------------------------------------
 
+
 class YuichiConfig:
+    bot_name = "yuichi_v14_cli"
+
     symbols = ["BTC/USDT"]
     timeframe = "1m"
     capital = 1000.0
-
-    bot_name = "yuichi_v14_cli"
-    status_dir = "status"
 
     timeframes = {
         "micro": "1m",
@@ -102,32 +109,29 @@ class YuichiConfig:
         "macro": "4h",
     }
 
-    # Frais / slippage réalistes
-    trading_fee_rate = 0.001   # 0.1%
-    slippage_rate = 0.0003     # 0.03%
-    min_profit_threshold = 0.004  # 0.4% min pour couvrir frais
+    trading_fee_rate = 0.001
+    slippage_rate = 0.0003
+    min_profit_threshold = 0.004  # 0.4%
 
-    # Limites de risque (MODE NORMAL)
-    max_daily_loss_pct = 0.15
-    max_trades_per_day = 10
+    max_daily_loss_pct = 0.18
+    max_trades_per_day = 12
 
-    # Position sizing – NORMAL
+    # Sizing plus doux
     base_positions = {
         "observing": 0,
-        "trap_detected": 50,
-        "setup_forming": 75,
+        "trap_detected": 40,
+        "setup_forming": 70,
         "game_over": 150,
     }
 
-    martingale_multipliers = [1.0, 1.5, 2.5, 4.0, 6.5, 10.0]
+    martingale_multipliers = [1.0, 1.5, 2.5, 4.0]
     current_martingale_level = 0
     max_martingale_level = 3
 
-    # Seuils Yuichi
-    min_trap_confidence = 75.0
+    min_trap_confidence = 72.0
     min_setup_score = 7.0
 
-    min_time_between_trades = 20  # minutes
+    min_time_between_trades = 15  # minutes
     last_trade_time: Optional[datetime] = None
 
     min_observation_candles = 50
@@ -140,27 +144,30 @@ class YuichiConfig:
     cumulative_winnings = 0.0
     running = True
 
-    # Battle steps façon "Yuichi" (juste pour tracking mental)
-    battle_step = 0  # incrémenté à chaque entrée
-
     whale_patterns_detected: Dict[str, int] = {}
     retail_patterns_detected: Dict[str, int] = {}
     manipulation_history = deque(maxlen=100)
+
+    status_dir = "status"
+    battle_step = 0  # numéro de "combat" Yuichi
 
 
 config = YuichiConfig()
 os.makedirs(config.status_dir, exist_ok=True)
 
 # ---------------------------------------------------------------------
-# EXCHANGE
+# EXCHANGE WRAPPER
 # ---------------------------------------------------------------------
+
 
 class EliteExchange:
     def __init__(self):
-        self.exchange = ccxt.binance({
-            "enableRateLimit": True,
-            "options": {"defaultType": "spot"},
-        })
+        self.exchange = ccxt.binance(
+            {
+                "enableRateLimit": True,
+                "options": {"defaultType": "spot"},
+            }
+        )
         self.rate_limit_buffer = 1.2
 
     def fetch_with_retry(self, func, *args, max_retries=3, **kwargs):
@@ -169,12 +176,13 @@ class EliteExchange:
                 return func(*args, **kwargs)
             except ccxt.RateLimitExceeded:
                 wait_time = (2 ** attempt) * self.rate_limit_buffer
-                logger.warning(f"Rate limit - wait {wait_time:.1f}s")
+                logger.warning(f"[RATE] Rate limit - wait {wait_time:.1f}s")
                 time.sleep(wait_time)
             except Exception as e:
-                logger.error(f"Failed after {attempt+1}/{max_retries}: {e}")
                 if attempt == max_retries - 1:
+                    logger.error(f"[EXCHANGE] Failed after {max_retries}: {e}")
                     return None
+                logger.warning(f"[EXCHANGE] Error: {e} | retry {attempt + 1}")
                 time.sleep(2 ** attempt)
         return None
 
@@ -191,6 +199,7 @@ exchange = EliteExchange()
 # PERFORMANCE TRACKER
 # ---------------------------------------------------------------------
 
+
 class PerformanceTracker:
     def __init__(self):
         self.trades = []
@@ -200,11 +209,6 @@ class PerformanceTracker:
         self.total_loss = 0.0
         self.largest_win = 0.0
         self.largest_loss = 0.0
-
-        # Yuichi stats
-        self.game_over_setups = 0
-        self.game_over_wins = 0
-        self.trap_reversals = 0
 
         self.win_rate = 0.0
         self.avg_win = 0.0
@@ -230,20 +234,13 @@ class PerformanceTracker:
         self.avg_loss = (self.total_loss / self.losses) if self.losses > 0 else 0.0
         self.profit_factor = (self.total_profit / self.total_loss) if self.total_loss > 0 else 0.0
 
-        if trade_data.get("game_state") == "game_over":
-            self.game_over_setups += 1
-            if pnl > 0:
-                self.game_over_wins += 1
-
-        if trade_data.get("trap_reversal"):
-            self.trap_reversals += 1
-
 
 performance = PerformanceTracker()
 
 # ---------------------------------------------------------------------
 # INDICATEURS
 # ---------------------------------------------------------------------
+
 
 def calculate_rsi(prices, period=14):
     delta = prices.diff()
@@ -279,7 +276,7 @@ def detect_order_flow_imbalance(df, window=10):
             selling_pressure.append(0)
             continue
 
-        if df["close"].iloc[i] > df["close"].iloc[i-1]:
+        if df["close"].iloc[i] > df["close"].iloc[i - 1]:
             buying_pressure.append(df["volume"].iloc[i])
             selling_pressure.append(0)
         else:
@@ -292,7 +289,7 @@ def detect_order_flow_imbalance(df, window=10):
     return df
 
 
-def calculate_all_indicators(df):
+def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     try:
         df["ATR"] = calculate_atr(df)
         df["RSI"] = calculate_rsi(df["close"])
@@ -311,37 +308,37 @@ def calculate_all_indicators(df):
 
         return df
     except Exception as e:
-        logger.error(f"Indicator error: {e}")
+        logger.error(f"[INDICATORS] Error: {e}")
         return df
 
-
 # ---------------------------------------------------------------------
-# TRAP DETECTION & GAME STATE
+# TRAP & PSYCHOLOGIE
 # ---------------------------------------------------------------------
 
-def detect_yuichi_trap(df_5m, df_15m, df_1h, order_book) -> tuple:
-    """
-    Détection des pièges à la Yuichi
-    Retourne: (TrapType, confidence 0-100)
-    """
+
+def detect_yuichi_trap(
+    df_5m: pd.DataFrame,
+    df_15m: Optional[pd.DataFrame],
+    df_1h: Optional[pd.DataFrame],
+    order_book: Optional[dict],
+) -> Tuple[Optional[TrapType], float]:
     if df_5m is None or df_5m.empty or len(df_5m) < 50:
         return None, 0.0
 
     price = df_5m["close"].iloc[-1]
     rsi_5m = df_5m["RSI"].iloc[-1]
     volume = df_5m["volume"].iloc[-1]
-    avg_volume = df_5m["volume"].iloc[-20:-1].mean()
+    avg_volume = df_5m["volume"].iloc[-30:-1].mean()
 
-    recent_high_5m = df_5m["high"].iloc[-30:-1].max()
-    recent_low_5m = df_5m["low"].iloc[-30:-1].min()
+    recent_high_5m = df_5m["high"].iloc[-40:-1].max()
+    recent_low_5m = df_5m["low"].iloc[-40:-1].min()
 
     confidence = 0.0
-    trap = None
+    trap: Optional[TrapType] = None
 
     # BULL TRAP
     if price > recent_high_5m:
         volume_ratio = volume / avg_volume
-
         if volume_ratio < 0.8:
             confidence += 30
         if rsi_5m > 70:
@@ -350,22 +347,21 @@ def detect_yuichi_trap(df_5m, df_15m, df_1h, order_book) -> tuple:
             rsi_15m_current = df_15m["RSI"].iloc[-1]
             rsi_15m_prev = df_15m["RSI"].iloc[-3]
             if rsi_15m_current < rsi_15m_prev:
-                confidence += 25
+                confidence += 20
 
         if order_book:
-            bids = sum(b[1] for b in order_book.get('bids', [])[:5])
-            asks = sum(a[1] for a in order_book.get('asks', [])[:5])
+            bids = sum(b[1] for b in order_book.get("bids", [])[:5])
+            asks = sum(a[1] for a in order_book.get("asks", [])[:5])
             if asks > bids * 2:
                 confidence += 20
 
-        if confidence >= 50:
+        if confidence >= 55:
             trap = TrapType.BULL_TRAP
-            logger.warning(f"🪤 BULL TRAP detected! Confidence: {confidence:.0f}%")
+            logger.warning(f"[TRAP] BULL TRAP detected! Conf={confidence:.0f}%")
 
     # BEAR TRAP
     elif price < recent_low_5m:
         volume_ratio = volume / avg_volume
-
         if volume_ratio < 0.8:
             confidence += 30
         if rsi_5m < 30:
@@ -374,22 +370,21 @@ def detect_yuichi_trap(df_5m, df_15m, df_1h, order_book) -> tuple:
             rsi_15m_current = df_15m["RSI"].iloc[-1]
             rsi_15m_prev = df_15m["RSI"].iloc[-3]
             if rsi_15m_current > rsi_15m_prev:
-                confidence += 25
+                confidence += 20
 
         if order_book:
-            bids = sum(b[1] for b in order_book.get('bids', [])[:5])
-            asks = sum(a[1] for a in order_book.get('asks', [])[:5])
+            bids = sum(b[1] for b in order_book.get("bids", [])[:5])
+            asks = sum(a[1] for a in order_book.get("asks", [])[:5])
             if bids > asks * 2:
                 confidence += 20
 
-        if confidence >= 50:
+        if confidence >= 55:
             trap = TrapType.BEAR_TRAP
-            logger.warning(f"🪤 BEAR TRAP detected! Confidence: {confidence:.0f}%")
+            logger.warning(f"[TRAP] BEAR TRAP detected! Conf={confidence:.0f}%")
 
     # LIQUIDITY GRAB
     if df_5m is not None and len(df_5m) >= 5:
         candle_1 = df_5m.iloc[-5]
-        candle_2 = df_5m.iloc[-4]
         candle_3 = df_5m.iloc[-3]
         candle_now = df_5m.iloc[-1]
 
@@ -399,59 +394,62 @@ def detect_yuichi_trap(df_5m, df_15m, df_1h, order_book) -> tuple:
         if drop < -0.01 and bounce > 0.005:
             volume_spike = df_5m["volume"].iloc[-5:-2].max() / avg_volume
             if volume_spike > 1.5:
-                confidence = 70
+                confidence = max(confidence, 70)
                 trap = TrapType.LIQUIDITY_GRAB
-                logger.warning(f"🪤 LIQUIDITY GRAB detected! Confidence: {confidence:.0f}%")
+                logger.warning(f"[TRAP] LIQUIDITY GRAB detected! Conf={confidence:.0f}%")
 
-    # RETAIL FOMO
+    # RETAIL FOMO / PANIC
     if rsi_5m > 80:
         volume_explosion = volume / avg_volume
         candle_range = (df_5m["high"].iloc[-1] - df_5m["low"].iloc[-1]) / df_5m["close"].iloc[-1]
-
         if volume_explosion > 2.0 and candle_range < 0.003:
-            confidence = 75
+            confidence = max(confidence, 75)
             trap = TrapType.RETAIL_FOMO
-            logger.warning(f"🪤 RETAIL FOMO detected! Confidence: {confidence:.0f}%")
-
-    # RETAIL PANIC
+            logger.warning(f"[TRAP] RETAIL FOMO detected! Conf={confidence:.0f}%")
     elif rsi_5m < 20:
         volume_explosion = volume / avg_volume
         candle_range = (df_5m["high"].iloc[-1] - df_5m["low"].iloc[-1]) / df_5m["close"].iloc[-1]
-
         if volume_explosion > 2.0 and candle_range < 0.003:
-            confidence = 75
+            confidence = max(confidence, 75)
             trap = TrapType.RETAIL_PANIC
-            logger.warning(f"🪤 RETAIL PANIC detected! Confidence: {confidence:.0f}%")
+            logger.warning(f"[TRAP] RETAIL PANIC detected! Conf={confidence:.0f}%")
 
     return trap, confidence
 
 
-def determine_game_state(trap, trap_confidence, sentiment, vol_regime, df_5m, df_1h) -> GameState:
+def determine_game_state(
+    trap: Optional[TrapType],
+    trap_confidence: float,
+    sentiment: MarketSentiment,
+    vol_regime: str,
+    df_5m: pd.DataFrame,
+    df_1h: Optional[pd.DataFrame],
+) -> GameState:
     if trap and trap_confidence >= config.min_trap_confidence:
         if df_1h is not None and not df_1h.empty and len(df_1h) > 50:
             sma50_1h = df_1h["SMA_50"].iloc[-1]
             sma200_1h = df_1h["SMA_200"].iloc[-1]
 
             if trap == TrapType.BEAR_TRAP and sma50_1h > sma200_1h:
-                logger.info("🎮 GAME OVER: Bear trap in uptrend!")
+                logger.info("[GAME] GAME OVER: Bear trap in uptrend!")
                 return GameState.GAME_OVER
 
             if trap == TrapType.BULL_TRAP and sma50_1h < sma200_1h:
-                logger.info("🎮 GAME OVER: Bull trap in downtrend!")
+                logger.info("[GAME] GAME OVER: Bull trap in downtrend!")
                 return GameState.GAME_OVER
 
             if trap == TrapType.RETAIL_PANIC and sma50_1h > sma200_1h:
-                logger.info("🎮 GAME OVER: Retail panic in uptrend!")
+                logger.info("[GAME] GAME OVER: Retail panic in uptrend!")
                 return GameState.GAME_OVER
 
             if trap == TrapType.RETAIL_FOMO and sma50_1h < sma200_1h:
-                logger.info("🎮 GAME OVER: Retail FOMO in downtrend!")
+                logger.info("[GAME] GAME OVER: Retail FOMO in downtrend!")
                 return GameState.GAME_OVER
 
-    if trap and trap_confidence >= 60:
+    if trap and trap_confidence >= 65:
         return GameState.SETUP_FORMING
 
-    if trap and trap_confidence >= 50:
+    if trap and trap_confidence >= 55:
         return GameState.TRAP_DETECTED
 
     if vol_regime in ["extreme", "choppy"]:
@@ -460,7 +458,7 @@ def determine_game_state(trap, trap_confidence, sentiment, vol_regime, df_5m, df
     return GameState.OBSERVING
 
 
-def calculate_yuichi_psychology(multi_tf_data, order_book) -> MarketPsychology:
+def calculate_yuichi_psychology(multi_tf_data: Dict[str, pd.DataFrame], order_book: Optional[dict]) -> MarketPsychology:
     df_5m = multi_tf_data.get("tactical")
     df_15m = multi_tf_data.get("strategic")
     df_1h = multi_tf_data.get("oversight")
@@ -475,7 +473,7 @@ def calculate_yuichi_psychology(multi_tf_data, order_book) -> MarketPsychology:
             manipulation_detected=False,
             trap_type=None,
             trap_confidence=0.0,
-            game_state=GameState.UNCERTAIN
+            game_state=GameState.UNCERTAIN,
         )
 
     rsi = df_5m["RSI"].iloc[-1]
@@ -508,14 +506,11 @@ def calculate_yuichi_psychology(multi_tf_data, order_book) -> MarketPsychology:
         vol_regime = "low"
 
     trap, trap_confidence = detect_yuichi_trap(df_5m, df_15m, df_1h, order_book)
-
     manipulation_detected = trap is not None
     if manipulation_detected:
         sentiment = MarketSentiment.MANIPULATION
 
-    game_state = determine_game_state(
-        trap, trap_confidence, sentiment, vol_regime, df_5m, df_1h
-    )
+    game_state = determine_game_state(trap, trap_confidence, sentiment, vol_regime, df_5m, df_1h)
 
     order_flow = df_5m["order_flow_delta"].iloc[-1] if "order_flow_delta" in df_5m.columns else 0.0
 
@@ -528,26 +523,26 @@ def calculate_yuichi_psychology(multi_tf_data, order_book) -> MarketPsychology:
         manipulation_detected=manipulation_detected,
         trap_type=trap,
         trap_confidence=trap_confidence,
-        game_state=game_state
+        game_state=game_state,
     )
 
-
 # ---------------------------------------------------------------------
-# ENTRY LOGIC - YUICHI STYLE
+# ENTRY LOGIC
 # ---------------------------------------------------------------------
 
-def yuichi_entry_signal(multi_tf_data, psychology) -> tuple:
+
+def yuichi_entry_signal(multi_tf_data: Dict[str, pd.DataFrame], psychology: MarketPsychology):
     if psychology.game_state == GameState.UNCERTAIN:
-        return None, 0.0, "Conditions incertaines"
+        return None, 0.0, "uncertain"
 
     if psychology.game_state == GameState.OBSERVING:
-        return None, 0.0, "Phase d'observation"
+        return None, 0.0, "observing"
 
     df = multi_tf_data.get("tactical")
     if df is None or df.empty or len(df) < config.min_observation_candles:
-        return None, 0.0, "Pas assez de données"
+        return None, 0.0, "not_enough_data"
 
-    signal_type = None
+    signal_type: Optional[str] = None
     score = 0.0
 
     trap = psychology.trap_type
@@ -558,18 +553,18 @@ def yuichi_entry_signal(multi_tf_data, psychology) -> tuple:
         score = trap_conf / 10.0
         rsi = df["RSI"].iloc[-1]
         if rsi < 30:
-            score += 1.5
+            score += 1.2
         if psychology.smart_money_flow > 0:
-            score += 1.0
+            score += 0.8
 
     elif trap == TrapType.BULL_TRAP:
         signal_type = "sell"
         score = trap_conf / 10.0
         rsi = df["RSI"].iloc[-1]
         if rsi > 70:
-            score += 1.5
+            score += 1.2
         if psychology.smart_money_flow < 0:
-            score += 1.0
+            score += 0.8
 
     elif trap == TrapType.LIQUIDITY_GRAB:
         df_1h = multi_tf_data.get("oversight")
@@ -581,27 +576,27 @@ def yuichi_entry_signal(multi_tf_data, psychology) -> tuple:
 
     elif trap == TrapType.RETAIL_PANIC:
         signal_type = "buy"
-        score = trap_conf / 10.0 + 2.0
+        score = trap_conf / 10.0 + 1.8
 
     elif trap == TrapType.RETAIL_FOMO:
         signal_type = "sell"
-        score = trap_conf / 10.0 + 2.0
+        score = trap_conf / 10.0 + 1.8
 
     if not signal_type or score < config.min_setup_score:
-        return None, score, "Score insuffisant"
+        return None, score, "score_too_low"
 
     logger.info(
-        f"🎯 YUICHI SIGNAL: {signal_type.upper()} | Score: {score:.1f}/10 | "
-        f"Trap: {trap.value if trap else 'none'} | GameState: {psychology.game_state.value}"
+        f"[SIGNAL] {signal_type.upper()} | Score={score:.1f}/10 | "
+        f"Trap={trap.value if trap else 'none'} ({trap_conf:.0f}%)"
     )
-    return signal_type, score, psychology
-
+    return signal_type, score, "ok"
 
 # ---------------------------------------------------------------------
-# POSITION SIZING - YUICHI STYLE
+# SIZING / SL / TP / PNL
 # ---------------------------------------------------------------------
 
-def calculate_yuichi_position_size(psychology, score) -> float:
+
+def calculate_yuichi_position_size(psychology: MarketPsychology, score: float) -> float:
     game_state = psychology.game_state
     base = config.base_positions.get(game_state.value, 0)
 
@@ -612,18 +607,18 @@ def calculate_yuichi_position_size(psychology, score) -> float:
     size = base * martingale_mult
 
     if psychology.volatility_regime == "extreme":
-        size *= 0.5
+        size *= 0.6
     elif psychology.volatility_regime == "low":
         size *= 1.2
 
     if score >= 9.0:
         size *= 1.3
-        logger.info("💎 PERFECT SETUP: Size boosted 30%")
+        logger.info("[SIZE] PERFECT setup → +30% size")
 
     return size
 
 
-def calculate_smart_sl_tp(entry, df, signal_type, psychology, score):
+def calculate_smart_sl_tp(entry, df: pd.DataFrame, signal_type: str, psychology: MarketPsychology, score: float):
     atr = df["ATR"].iloc[-1]
 
     recent_lows = df["low"].iloc[-30:].nsmallest(3).mean()
@@ -635,7 +630,7 @@ def calculate_smart_sl_tp(entry, df, signal_type, psychology, score):
         stop_loss = max(structural_sl, atr_sl)
 
         if score >= 9.0:
-            tp_mult = 4.0
+            tp_mult = 3.8
         elif score >= 8.0:
             tp_mult = 3.0
         elif score >= 7.0:
@@ -651,7 +646,7 @@ def calculate_smart_sl_tp(entry, df, signal_type, psychology, score):
         stop_loss = min(structural_sl, atr_sl)
 
         if score >= 9.0:
-            tp_mult = 4.0
+            tp_mult = 3.8
         elif score >= 8.0:
             tp_mult = 3.0
         elif score >= 7.0:
@@ -664,156 +659,121 @@ def calculate_smart_sl_tp(entry, df, signal_type, psychology, score):
     return stop_loss, take_profit
 
 
-# ---------------------------------------------------------------------
-# REALISTIC PNL CALCULATION
-# ---------------------------------------------------------------------
-
-def calculate_realistic_pnl(entry, exit, size, trade_type):
+def calculate_realistic_pnl(entry, exit_price, size, trade_type):
     entry_fee = size * config.trading_fee_rate
     exit_fee = size * config.trading_fee_rate
     total_fees = entry_fee + exit_fee
 
     if trade_type == "buy":
         actual_entry = entry * (1 + config.slippage_rate)
-        actual_exit = exit * (1 - config.slippage_rate)
+        actual_exit = exit_price * (1 - config.slippage_rate)
         qty = size / actual_entry
         gross_pnl = (actual_exit - actual_entry) * qty
     else:
         actual_entry = entry * (1 - config.slippage_rate)
-        actual_exit = exit * (1 + config.slippage_rate)
+        actual_exit = exit_price * (1 + config.slippage_rate)
         qty = size / actual_entry
         gross_pnl = (actual_entry - actual_exit) * qty
 
     net_pnl = gross_pnl - total_fees
     return net_pnl, total_fees, gross_pnl
 
-
 # ---------------------------------------------------------------------
 # TRADE STATE
 # ---------------------------------------------------------------------
 
+
 class TradeState:
     def __init__(self):
         self.active = False
-        self.type = None
-        self.entry_price = None
-        self.entry_time = None
-        self.stop_loss = None
-        self.take_profit = None
-        self.position_size = 0.0
-        self.score = 0.0
-        self.game_state = None
-        self.trap_type = None
-        self.psychology_snapshot = None
+        self.type: Optional[str] = None
+        self.entry_price: Optional[float] = None
+        self.entry_time: Optional[datetime] = None
+        self.stop_loss: Optional[float] = None
+        self.take_profit: Optional[float] = None
+        self.position_size: float = 0.0
+        self.score: float = 0.0
+        self.game_state: Optional[GameState] = None
+        self.trap_type: Optional[TrapType] = None
+        self.psychology_snapshot: Optional[MarketPsychology] = None
 
 
 trade_state = TradeState()
 price_history: List[float] = []
 
-
 # ---------------------------------------------------------------------
-# STATUS EXPORT (pour ton app Windows)
+# STATUS JSON POUR DASHBOARD WINDOWS
 # ---------------------------------------------------------------------
 
-def write_status(extra: dict | None = None):
-    """Écrit l'état courant du bot dans un JSON pour que ton app Windows le lise."""
+
+def write_status(extra: Optional[dict] = None):
     try:
         data = {
             "bot_name": config.bot_name,
-            "capital": getattr(config, "capital", None),
-            "cumulative_winnings": getattr(config, "cumulative_winnings", 0.0),
-            "daily_loss": getattr(config, "daily_loss", 0.0),
-            "trades_executed_today": getattr(config, "trades_executed_today", 0),
-            "martingale_step": getattr(config, "current_martingale_level", 0),
-            "battle_step": getattr(config, "battle_step", 0),
-            "running": getattr(config, "running", True),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
 
-            "position_active": getattr(trade_state, "active", False),
-            "side": getattr(trade_state, "type", None),
-            "entry_price": getattr(trade_state, "entry_price", None),
-            "stop_loss": getattr(trade_state, "stop_loss", None),
-            "take_profit": getattr(trade_state, "take_profit", None),
-            "position_size": getattr(trade_state, "position_size", 0.0),
-            "score": getattr(trade_state, "score", 0.0),
+            "capital": config.capital,
+            "cumulative_winnings": config.cumulative_winnings,
+            "battle_step": config.battle_step,
+            "martingale_level": config.current_martingale_level,
+            "trades_executed_today": config.trades_executed_today,
+
+            "active_trade": trade_state.active,
+            "trade_type": trade_state.type,
+            "entry_price": trade_state.entry_price,
+            "stop_loss": trade_state.stop_loss,
+            "take_profit": trade_state.take_profit,
+            "position_size": trade_state.position_size,
+
             "game_state": trade_state.game_state.value if trade_state.game_state else None,
             "trap_type": trade_state.trap_type.value if trade_state.trap_type else None,
-
-            "last_update": datetime.utcnow().isoformat() + "Z",
         }
         if extra:
             data.update(extra)
 
-        os.makedirs(config.status_dir, exist_ok=True)
         path = os.path.join(config.status_dir, f"{config.bot_name}.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
     except Exception as e:
         logger.error(f"[STATUS] Write error: {e}")
 
-
 # ---------------------------------------------------------------------
-# HELPER LOGGING (CLI)
+# LOG HELPER
 # ---------------------------------------------------------------------
 
-def log_result(msg, log_box=None):
+
+def log_result(msg: str):
     try:
-        with open("yuichi_true_trades_v14.txt", "a", encoding="utf-8") as f:
+        with open("yuichi_v14_trades_cli.txt", "a", encoding="utf-8") as f:
             f.write(f"[{datetime.now()}] {msg}\n")
         logger.info(msg)
     except Exception as e:
-        logger.error(f"Log error: {e}")
-
-
-def update_winnings_box(entry_var=None):
-    logger.info(
-        f"[WINNINGS] Cumulative winnings: ${config.cumulative_winnings:.2f} | "
-        f"Martingale step: {config.current_martingale_level} | Battle step: {config.battle_step}"
-    )
-
-
-def update_stats_panel(box=None):
-    logger.info(
-        f"[STATS] Wins: {performance.wins} | Losses: {performance.losses} | "
-        f"WinRate: {performance.win_rate:.1f}% | PF: {performance.profit_factor:.2f}"
-    )
-
-
-def update_psychology_panel(box, psychology):
-    if psychology is None:
-        return
-    logger.info(
-        f"[PSYCHO] Sentiment: {psychology.sentiment.value} | F&G: {psychology.fear_greed_index:.0f} "
-        f"| Vol: {psychology.volatility_regime} | GameState: {psychology.game_state.value} "
-        f"| Trap: {psychology.trap_type.value if psychology.trap_type else 'none'} "
-        f"({psychology.trap_confidence:.0f}%)"
-    )
-
-
-def update_chart(ax=None, canvas=None):
-    return
-
+        logger.error(f"[LOG] Error: {e}")
 
 # ---------------------------------------------------------------------
 # DATA FETCH
 # ---------------------------------------------------------------------
 
-def fetch_multi_timeframe_data(symbol):
-    data = {}
+
+def fetch_multi_timeframe_data(symbol: str) -> Dict[str, pd.DataFrame]:
+    data: Dict[str, pd.DataFrame] = {}
     for name, tf in config.timeframes.items():
         limit = 200 if name != "macro" else 100
         ohlcv = exchange.fetch_ohlcv(symbol, tf, limit=limit)
         if ohlcv:
-            df = pd.DataFrame(ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
+            df = pd.DataFrame(
+                ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"]
+            )
             df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
             data[name] = df
     return data
-
 
 # ---------------------------------------------------------------------
 # CLOSE TRADE
 # ---------------------------------------------------------------------
 
-def close_trade(reason, exit_price, log_box=None, winnings_var=None):
+
+def close_trade(reason: str, exit_price: float):
     if not trade_state.active:
         return
 
@@ -821,7 +781,7 @@ def close_trade(reason, exit_price, log_box=None, winnings_var=None):
         trade_state.entry_price,
         exit_price,
         trade_state.position_size,
-        trade_state.type
+        trade_state.type,
     )
 
     config.capital += net_pnl
@@ -832,11 +792,12 @@ def close_trade(reason, exit_price, log_box=None, winnings_var=None):
     else:
         config.current_martingale_level = min(
             config.current_martingale_level + 1,
-            config.max_martingale_level
+            config.max_martingale_level,
         )
         config.daily_loss += abs(net_pnl)
 
     result = "WIN" if net_pnl > 0 else "LOSS"
+    roi_pct = (net_pnl / trade_state.position_size) * 100 if trade_state.position_size > 0 else 0
 
     trade_data = {
         "timestamp": datetime.now(),
@@ -850,91 +811,73 @@ def close_trade(reason, exit_price, log_box=None, winnings_var=None):
         "score": trade_state.score,
         "game_state": trade_state.game_state.value if trade_state.game_state else "unknown",
         "trap_type": trade_state.trap_type.value if trade_state.trap_type else "none",
-        "trap_reversal": net_pnl > 0 and trade_state.trap_type is not None,
     }
     performance.log_trade(trade_data)
 
-    roi_pct = (net_pnl / trade_state.position_size) * 100 if trade_state.position_size > 0 else 0
-
     log_msg = (
-        f"\n{'='*80}\n"
+        f"\n{'=' * 70}\n"
         f"[CLOSE] {reason} [{result}]\n"
-        f"{'='*80}\n"
-        f"Battle step      : {config.battle_step}\n"
-        f"Martingale level : {config.current_martingale_level}\n"
-        f"Game State       : {trade_state.game_state.value if trade_state.game_state else 'unknown'}\n"
-        f"Trap             : {trade_state.trap_type.value if trade_state.trap_type else 'none'}\n"
-        f"Score            : {trade_state.score:.1f}/10\n"
-        f"Entry price      : {trade_state.entry_price:.2f} -> Exit: {exit_price:.2f}\n"
-        f"Position size    : {trade_state.position_size:.2f}\n"
-        f"Gross P/L        : {gross_pnl:.2f}\n"
-        f"Fees             : -{fees:.2f}\n"
-        f"Net P/L          : {net_pnl:.2f} ({roi_pct:+.2f}%)\n"
-        f"Capital          : {config.capital:.2f}\n"
-        f"CumulativeWinnings: {config.cumulative_winnings:.2f}\n"
-        f"WinRate          : {performance.win_rate:.1f}% | PF: {performance.profit_factor:.2f}\n"
-        f"{'='*80}\n"
+        f"{'=' * 70}\n"
+        f"Battle step: {config.battle_step} | Martingale level: {config.current_martingale_level}\n"
+        f"Entry: ${trade_state.entry_price:.2f} -> Exit: ${exit_price:.2f}\n"
+        f"Position: ${trade_state.position_size:.2f}\n"
+        f"SL: ${trade_state.stop_loss:.2f} | TP: ${trade_state.take_profit:.2f}\n"
+        f"Gross P/L: ${gross_pnl:.2f}\n"
+        f"Fees: -${fees:.2f}\n"
+        f"Net P/L: ${net_pnl:.2f} ({roi_pct:+.2f}%)\n"
+        f"Capital: ${config.capital:.2f}\n"
+        f"Cumulative winnings: ${config.cumulative_winnings:.2f}\n"
+        f"WinRate: {performance.win_rate:.1f}% | PF: {performance.profit_factor:.2f}\n"
+        f"{'=' * 70}\n"
     )
-
-    log_result(log_msg, log_box)
+    log_result(log_msg)
 
     trade_state.active = False
     config.trades_executed_today += 1
     config.last_trade_time = datetime.now()
 
-    write_status({
-        "last_trade_reason": reason,
-        "last_trade_pnl": net_pnl,
-        "last_trade_result": result,
-    })
-
-    update_winnings_box(winnings_var)
-
+    write_status({"state": "flat"})
 
 # ---------------------------------------------------------------------
 # MAIN LOOP
 # ---------------------------------------------------------------------
 
-def execute_yuichi_strategy(
-    log_box=None,
-    ax=None,
-    canvas=None,
-    winnings_var=None,
-    stats_box=None,
-    psych_box=None,
-):
-    logger.info("=" * 70)
-    logger.info("💎 YUICHI TRUE METHOD v14 (CLI NORMAL) 💎")
-    logger.info("Patience. Observation. Pièges. Exécution chirurgicale.")
-    logger.info("=" * 70)
+
+def execute_yuichi_strategy():
+    logger.info("======================================================")
+    logger.info("[YUICHI-TRUE] - INIT Yuichi True Method v14 (CLI NORMAL)")
+    logger.info(f"[YUICHI-TRUE] - Starting capital: {config.capital:.2f}")
+    logger.info(
+        f"[YUICHI-TRUE] - Status JSON: {os.path.join(config.status_dir, config.bot_name + '.json')}"
+    )
+    logger.info("======================================================")
 
     while config.running:
         try:
-            # Limites de risque journalières
-            if (config.trades_executed_today >= config.max_trades_per_day or
-                config.daily_loss >= config.capital * config.max_daily_loss_pct or
-                config.current_martingale_level >= config.max_martingale_level):
-                log_result("[RISK] Daily limits reached, bot pausing.", log_box)
-                write_status()
+            if (
+                config.trades_executed_today >= config.max_trades_per_day
+                or config.daily_loss >= config.capital * config.max_daily_loss_pct
+                or config.current_martingale_level >= config.max_martingale_level
+            ):
+                log_result("[LIMIT] Daily limits reached, bot on cooldown.")
+                write_status({"state": "cooldown"})
                 time.sleep(60)
                 continue
 
-            # Cooldown entre trades
             if config.last_trade_time:
                 elapsed = (datetime.now() - config.last_trade_time).total_seconds() / 60.0
                 if elapsed < config.min_time_between_trades:
-                    write_status()
+                    write_status({"state": "cooldown_wait"})
                     time.sleep(10)
                     continue
 
             multi_tf_data = fetch_multi_timeframe_data(config.symbols[0])
             df = multi_tf_data.get("tactical")
             if df is None or df.empty or len(df) < config.min_observation_candles:
-                write_status()
+                write_status({"state": "waiting_data"})
                 time.sleep(5)
                 continue
 
-            # Calcul indicateurs
             for name in list(multi_tf_data.keys()):
                 multi_tf_data[name] = calculate_all_indicators(multi_tf_data[name])
 
@@ -946,35 +889,38 @@ def execute_yuichi_strategy(
                 price_history.pop(0)
 
             order_book = exchange.fetch_order_book(config.symbols[0], limit=20)
-
             psychology = calculate_yuichi_psychology(multi_tf_data, order_book)
-            update_psychology_panel(psych_box, psychology)
 
-            # Aucun trade en cours
+            # SANS POSITION
             if not trade_state.active:
                 signal_type, score, reason = yuichi_entry_signal(multi_tf_data, psychology)
 
                 if not signal_type:
-                    write_status()
+                    logger.info(
+                        f"[STATE] observing | price={current_price:.2f} "
+                        f"| battle={config.battle_step} "
+                        f"| martingale={config.current_martingale_level} "
+                        f"| cumu=${config.cumulative_winnings:.2f} | reason={reason}"
+                    )
+                    write_status({"state": "observing"})
                     time.sleep(5)
                     continue
 
                 atr = df["ATR"].iloc[-1]
                 expected_profit_pct = (atr * 2.5) / current_price
                 if expected_profit_pct < config.min_profit_threshold:
-                    logger.info(f"[FILTER] Expected profit {expected_profit_pct:.2%} < threshold, skip")
-                    write_status()
+                    logger.info(
+                        f"[SKIP] Expected profit {expected_profit_pct:.2%} < threshold"
+                    )
+                    write_status({"state": "low_edge"})
                     time.sleep(5)
                     continue
 
                 position_size = calculate_yuichi_position_size(psychology, score)
-                if position_size == 0:
-                    write_status()
+                if position_size <= 0:
+                    write_status({"state": "zero_size"})
                     time.sleep(5)
                     continue
-
-                # ENTRÉE YUICHI
-                config.battle_step += 1
 
                 trade_state.active = True
                 trade_state.type = signal_type
@@ -990,55 +936,61 @@ def execute_yuichi_strategy(
                 trade_state.stop_loss = sl
                 trade_state.take_profit = tp
 
-                log_msg = (
-                    f"\n{'='*70}\n"
-                    f"[ENTRY] YUICHI ENTERS: {signal_type.upper()}\n"
-                    f"{'='*70}\n"
-                    f"Battle step  : {config.battle_step}\n"
-                    f"Game State   : {psychology.game_state.value}\n"
-                    f"Trap         : {psychology.trap_type.value if psychology.trap_type else 'none'}\n"
-                    f"Confidence   : {psychology.trap_confidence:.0f}%\n"
-                    f"Score        : {score:.1f}/10\n"
-                    f"Entry price  : {current_price:.2f}\n"
-                    f"Position     : {position_size:.2f}\n"
-                    f"SL           : {sl:.2f} | TP: {tp:.2f}\n"
-                    f"{'='*70}"
-                )
-                log_result(log_msg, log_box)
-                write_status()
+                config.battle_step += 1
 
-            # Position active
+                log_msg = (
+                    f"\n{'=' * 70}\n"
+                    f"[ENTER] YUICHI v14 (NORMAL): {signal_type.upper()}\n"
+                    f"{'=' * 70}\n"
+                    f"Battle step: {config.battle_step} | Martingale level: {config.current_martingale_level}\n"
+                    f"Game State: {psychology.game_state.value.upper()}\n"
+                    f"Trap: {psychology.trap_type.value if psychology.trap_type else 'none'} "
+                    f"({psychology.trap_confidence:.0f}%)\n"
+                    f"Score: {score:.1f}/10\n"
+                    f"Entry: ${current_price:.2f}\n"
+                    f"Position: ${position_size:.2f}\n"
+                    f"SL: ${sl:.2f} | TP: ${tp:.2f}\n"
+                    f"Cumulative winnings: ${config.cumulative_winnings:.2f}\n"
+                    f"{'=' * 70}"
+                )
+                log_result(log_msg)
+                write_status({"state": "in_position"})
+
+            # AVEC POSITION
             else:
                 if trade_state.type == "buy" and current_price >= trade_state.take_profit:
-                    close_trade("TAKE PROFIT", trade_state.take_profit, log_box, winnings_var)
+                    close_trade("TAKE PROFIT", trade_state.take_profit)
                 elif trade_state.type == "sell" and current_price <= trade_state.take_profit:
-                    close_trade("TAKE PROFIT", trade_state.take_profit, log_box, winnings_var)
+                    close_trade("TAKE PROFIT", trade_state.take_profit)
                 elif trade_state.type == "buy" and current_price <= trade_state.stop_loss:
-                    close_trade("STOP LOSS", trade_state.stop_loss, log_box, winnings_var)
+                    close_trade("STOP LOSS", trade_state.stop_loss)
                 elif trade_state.type == "sell" and current_price >= trade_state.stop_loss:
-                    close_trade("STOP LOSS", trade_state.stop_loss, log_box, winnings_var)
+                    close_trade("STOP LOSS", trade_state.stop_loss)
                 else:
-                    # toujours en position -> update status
-                    write_status()
+                    logger.info(
+                        f"[POSITION] {trade_state.type.upper()} | "
+                        f"entry={trade_state.entry_price:.2f} | "
+                        f"SL={trade_state.stop_loss:.2f} | TP={trade_state.take_profit:.2f} | "
+                        f"price={current_price:.2f} | "
+                        f"battle={config.battle_step} | "
+                        f"martingale={config.current_martingale_level} | "
+                        f"cumu=${config.cumulative_winnings:.2f}"
+                    )
+                    write_status({"state": "in_position"})
+                    time.sleep(5)
+                    continue
 
-            update_stats_panel(stats_box)
-            update_chart(ax, canvas)
-            update_winnings_box()
-            write_status()
             time.sleep(3)
 
         except Exception as e:
             logger.error(f"[LOOP] Error: {e}", exc_info=True)
-            write_status({"loop_error": str(e)})
+            write_status({"last_error": str(e)})
             time.sleep(5)
-
 
 # ---------------------------------------------------------------------
 # ENTRY POINT
 # ---------------------------------------------------------------------
 
+
 if __name__ == "__main__":
-    logger.info("[BOOT] Initializing Yuichi True Method v14 (CLI NORMAL)")
-    logger.info(f"[BOOT] Starting capital: {config.capital}")
-    logger.info("[BOOT] Status JSON: status/yuichi_v14_cli.json")
     execute_yuichi_strategy()

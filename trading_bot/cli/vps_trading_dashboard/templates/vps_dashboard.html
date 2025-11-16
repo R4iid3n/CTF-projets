@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎮 VPS Trading Bots Monitor</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <h1>🎮 VPS Trading Bots Monitor</h1>
+            <p class="subtitle">Real-time monitoring via SSH • <span id="vps-status">🔴 Connecting...</span></p>
+        </div>
+    </header>
+
+    <!-- Global Stats -->
+    <section class="global-stats">
+        <div class="container">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Total Capital</div>
+                    <div class="stat-value" id="total-capital">$0.00</div>
+                </div>
+                <div class="stat-card highlight">
+                    <div class="stat-label">Total Winnings</div>
+                    <div class="stat-value" id="total-winnings">$0.00</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Trades Today</div>
+                    <div class="stat-value" id="total-trades">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Best Performer</div>
+                    <div class="stat-value" id="best-performer">-</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Bot Cards -->
+    <section class="bots-section">
+        <div class="container">
+            <div id="bots-container" class="bots-grid">
+                <!-- Bot cards will be inserted here -->
+            </div>
+        </div>
+    </section>
+
+    <!-- Active Positions Chart -->
+    <section class="charts-section">
+        <div class="container">
+            <h2>📊 Active Positions</h2>
+            <div class="chart-container">
+                <canvas id="positionsChart"></canvas>
+            </div>
+        </div>
+    </section>
+
+    <!-- Log Viewer Modal -->
+    <div id="logModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="logModalTitle">Bot Logs</h2>
+                <span class="modal-close" onclick="closeLogModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <pre id="logContent">Loading...</pre>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeLogModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <p>🎮 VPS Trading Bots Dashboard - Live SSH Monitoring</p>
+            <p class="small">Auto-refresh every 3 seconds</p>
+        </div>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
