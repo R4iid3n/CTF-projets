@@ -20,37 +20,37 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------
 
 VPS_CONFIG = {
-    'host': '46.XXX.XXX.XXX',  # Change to your VPS IP
+    'host': '46.224.11.203',  # Change to your VPS IP
     'port': 22,
     'username': 'aml',
     'key_path': None,  # Path to SSH key or None
-    'password': None,  # Password or None if using key
+    'password': "9XrjobfAZLCPdPqno2h2CCHkY",  # Password or None if using key
 }
 
 # Bot configurations - match your VPS paths
 BOTS_CONFIG = {
     'v13': {
         'name': 'v13 FIXED',
-        'status_path': '/home/aml/bot-status/yuichi_v13.json',
-        'log_path': '/home/aml/trading-bot/yuichi_bot_v13_cli.log',
+        'status_path': '/home/aml/trading-bot/cli/status/yuichi_v13_cli.json',
+        'log_path': '/home/aml/trading-bot/cli/yuichi_bot_v13_cli.log',
         'color': '#ff4757'
     },
     'v13_5': {
         'name': 'v13.5 ENHANCED',
-        'status_path': '/home/aml/bot-status/yuichi_v13_5.json',
-        'log_path': '/home/aml/trading-bot/yuichi_bot_v13_5_cli.log',
+        'status_path': '/home/aml/trading-bot/cli/status/yuichi_v13_5_cli.json',
+        'log_path': '/home/aml/trading-bot/cli/yuichi_bot_v13_5_cli.log',
         'color': '#00d4ff'
     },
     'v14': {
         'name': 'v14 TRUE METHOD',
-        'status_path': '/home/aml/bot-status/yuichi_v14.json',
-        'log_path': '/home/aml/trading-bot/yuichi_bot_v14_cli.log',
+        'status_path': '/home/aml/trading-bot/cli/status/yuichi_v14_cli.json',
+        'log_path': '/home/aml/trading-bot/cli/yuichi_bot_v14_cli.log',
         'color': '#00ff88'
     },
     'v14_aggressive': {
         'name': 'v14 AGGRESSIVE',
-        'status_path': '/home/aml/bot-status/yuichi_v14_aggressive.json',
-        'log_path': '/home/aml/trading-bot/yuichi_bot_v14_aggressive_cli.log',
+        'status_path': '/home/aml/trading-bot/cli/status/yuichi_v14_aggressive_cli.json',
+        'log_path': '/home/aml/trading-bot/cli/yuichi_bot_v14_aggressive_cli.log',
         'color': '#ffa502'
     }
 }
@@ -170,6 +170,28 @@ def update_bot_data():
                     status['display_name'] = config['name']
                     status['color'] = config['color']
                     
+                    # Handle different JSON formats
+                    # v14 bots don't have "running" key, check timestamp instead
+                    if 'running' not in status:
+                        # Check if timestamp is recent (within last 30 seconds)
+                        if 'timestamp' in status or 'last_update' in status:
+                            status['running'] = True  # If file exists and recent, bot is running
+                        else:
+                            status['running'] = False
+                    
+                    # Normalize field names for v14 bots
+                    if 'active_trade' in status and 'position_active' not in status:
+                        status['position_active'] = status['active_trade']
+                    
+                    if 'trade_type' in status and 'side' not in status:
+                        status['side'] = status['trade_type']
+                    
+                    if 'position_size' in status and 'position_size_main' not in status:
+                        status['position_size_main'] = status.get('position_size', 0.0)
+                    
+                    if 'martingale_level' in status and 'martingale_step' not in status:
+                        status['martingale_step'] = status['martingale_level']
+                    
                     # Get recent logs
                     status['recent_logs'] = vps.tail_log(config['log_path'], lines=20)
                     
@@ -264,3 +286,13 @@ if __name__ == '__main__':
     print("=" * 70)
     
     app.run(debug=False, host='0.0.0.0', port=5000)
+
+
+
+
+
+
+
+
+
+
